@@ -1,9 +1,17 @@
 -- Collect test results from Python unittest text output.
 --
--- Parses "FAIL: method (module.ClassName)" and "ERROR: ..." lines from the
--- captured runner output.  All test positions found in the tree are reported
--- as "passed" by default; positions that appear in FAIL:/ERROR: lines are
--- updated to "failed".
+-- unittest's default output does not name which tests passed (it prints one
+-- char each), only which failed/errored (in the FAIL:/ERROR: summary blocks),
+-- so the bazel exit code is used as the authoritative pass/fail signal for the
+-- target as a whole:
+--   * exit 0  -> the target passed; every position is reported passed.
+--   * exit !0 -> read the output.  If unittest reached its "Ran N tests"
+--                footer, the suite ran: the named FAIL:/ERROR: tests are
+--                failed and the rest passed.  If the footer is absent the
+--                suite crashed before running any test (e.g. an import error);
+--                we cannot attribute that to a position, so return nil and let
+--                the adapter fail the running position rather than report a
+--                spurious all-green.
 --
 -- This collector works WITHOUT JUnit XML and is intended for Bazel py_test
 -- targets that run Python's built-in unittest runner without --junit-xml.
@@ -59,16 +67,16 @@ end
 local M = {}
 
 -- Returns table<string, {status}>, or nil when the tree has no test positions
--- (e.g. when called for a position type the tree walk produces nothing for).
+-- or the suite crashed before running (see the module comment).
 function M.collect(spec, result, tree)
   local by_class_method = {}
   local by_method = {}
-  local results = {}
+  local test_ids = {}
 
   for _, node in tree:iter_nodes() do
     local data = node:data()
     if data.type == "test" then
-      results[data.id] = { status = "passed" }
+      test_ids[#test_ids + 1] = data.id
       by_method[data.name] = by_method[data.name] or {}
       table.insert(by_method[data.name], data.id)
       local parent = node:parent()
@@ -78,12 +86,31 @@ function M.collect(spec, result, tree)
     end
   end
 
-  if vim.tbl_isempty(results) then
+  if #test_ids == 0 then
     return nil
   end
 
-  local log = (result.output and read_file(result.output)) or ""
+  local results = {}
+  local function seed_passed()
+    for _, id in ipairs(test_ids) do
+      results[id] = { status = "passed" }
+    end
+  end
 
+  -- Exit 0 means the whole target passed; no output to parse.
+  if result.code == 0 then
+    seed_passed()
+    return results
+  end
+
+  -- The target failed.  Only a completed run lets us treat "not named as a
+  -- failure" as passed; a crash before the footer can't be attributed.
+  local log = (result.output and read_file(result.output)) or ""
+  if not log:match("Ran %d+ test") then
+    return nil
+  end
+
+  seed_passed()
   for desc in log:gmatch("FAIL:%s+(.-)%s*\n") do
     local id = find_id(desc, by_class_method, by_method)
     if id then
