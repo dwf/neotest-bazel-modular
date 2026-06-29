@@ -1,7 +1,7 @@
 local lib = require("neotest.lib")
 local base = require("neotest-python.base")
 local xml_results = require("neotest-bazel-modular.results.xml")
-local resolve = require("neotest-bazel-modular.resolve")
+local runner = require("neotest-bazel-modular.runner")
 
 -- Delegate the treesitter query to neotest-python.  With runner="pytest" and
 -- no config overrides this returns the standard pytest query (all classes as
@@ -10,6 +10,9 @@ local resolve = require("neotest-bazel-modular.resolve")
 -- through the async parse_positions path.
 local _QUERY = base.treesitter_queries("pytest", {}, nil)
 
+-- The python-specific half of build_spec: map a position to a pytest/unittest
+-- filter ("Class.method", "method", or "Class").  Everything else about the
+-- run spec is shared (see runner.lua).
 local function test_filter_for(args)
   local position = args.tree:data()
   if position.type == "test" then
@@ -26,13 +29,16 @@ end
 
 local function factory(config)
   config = config or {}
-  local bazel = config.bazel_binary or "bazel"
-  local extra_args = config.args or {}
-  local filter_arg = config.filter_arg or "--test_filter=%s"
-  local testlogs_symlink = config.testlogs_symlink or "bazel-testlogs"
-  local target_resolver = config.target_resolver or "treesitter"
+  local opts = {
+    bazel = config.bazel_binary or "bazel",
+    args = config.args or {},
+    filter_arg = config.filter_arg or "--test_filter=%s",
+    testlogs_symlink = config.testlogs_symlink or "bazel-testlogs",
+    target_resolver = config.target_resolver or "treesitter",
+    test_filter = test_filter_for,
+  }
   -- results_collector must have the signature:
-  --   collect(spec, result, tree) -> table<string, {status}> | nil
+  --   collect(spec, result, tree) -> table<position_id, {status}> | nil
   local collect = config.results_collector or xml_results.collect
 
   local M = {}
@@ -47,65 +53,11 @@ local function factory(config)
   end
 
   function M.build_spec(args, root)
-    local position = args.tree:data()
-    local filter = test_filter_for(args)
-
-    local target
-    if target_resolver == "query" then
-      target = resolve.query(position.path, root, bazel)
-    else
-      target = resolve.treesitter(position.path, root)
-    end
-    if not target then
-      return nil
-    end
-
-    local flags = {}
-    if filter then
-      flags[#flags + 1] = string.format(filter_arg, vim.fn.shellescape(filter))
-    end
-    for _, flag in ipairs(extra_args) do
-      flags[#flags + 1] = vim.fn.shellescape(flag)
-    end
-
-    local cmd = string.format("%s test %s %s", bazel, vim.fn.shellescape(target), table.concat(flags, " "))
-
-    return {
-      command = { "sh", "-c", cmd },
-      cwd = root,
-      context = {
-        testlogs_symlink = testlogs_symlink,
-        position_id = position.id,
-        root = root,
-        target = target,
-      },
-    }
+    return runner.build_spec(args, root, opts)
   end
 
   function M.results(spec, result, tree)
-    local r = collect(spec, result, tree)
-
-    -- Collector returned nil: no XML output was produced.  The command
-    -- failed before writing any results (sandbox error, etc.).  Report the
-    -- running position as failed.
-    if not r then
-      return { [spec.context.position_id] = { status = "failed", output = result.output } }
-    end
-
-    -- If the process exited non-zero but no failures appear in the collected
-    -- results, the binary likely crashed (import error, segfault) before any
-    -- individual test ran.  Mark the running position as failed so the user
-    -- sees something is wrong rather than a spurious all-green report.
-    if result.code ~= 0 then
-      for _, v in pairs(r) do
-        if v.status == "failed" then
-          return r
-        end
-      end
-      r[spec.context.position_id] = { status = "failed", output = result.output }
-    end
-
-    return r
+    return runner.results(spec, result, tree, collect)
   end
 
   -- Function-valued config entries replace adapter methods directly, allowing
