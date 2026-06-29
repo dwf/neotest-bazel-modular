@@ -133,7 +133,10 @@ function M.collect(spec, result, tree)
     return nil
   end
 
-  local testlogs_dir = spec.context.root .. "/" .. spec.context.testlogs_symlink .. "/" .. tpkg .. "/" .. tname
+  -- tpkg is "" for a root-package target (//:foo); skip it so the path does
+  -- not get a doubled slash.
+  local base = spec.context.root .. "/" .. spec.context.testlogs_symlink
+  local testlogs_dir = (tpkg == "" and base or (base .. "/" .. tpkg)) .. "/" .. tname
 
   local xml_files = find_xml_files(testlogs_dir)
   if #xml_files == 0 then

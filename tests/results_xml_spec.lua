@@ -123,4 +123,20 @@ describe("results.xml collect — guards", function()
     }
     assert.is_nil(xml.collect(spec, {}, tree))
   end)
+
+  it("handles a root-package target (//:foo) without a doubled slash", function()
+    -- tpkg is "" here; the testlogs path must be <root>/bazel-testlogs/foo,
+    -- not <root>/bazel-testlogs//foo.
+    local root = vim.fn.tempname()
+    local dir = root .. "/bazel-testlogs/foo"
+    vim.fn.mkdir(dir, "p")
+    vim.fn.writefile(vim.split(JUNIT, "\n"), dir .. "/test.xml")
+    local tree = build_tree()
+    local ids = ids_by_name(tree)
+    local results = xml.collect({
+      context = { target = "//:foo", root = root, testlogs_symlink = "bazel-testlogs" },
+    }, {}, tree)
+    assert.are.same({ status = "passed" }, results[ids["test_add"]])
+    assert.are.same({ status = "failed" }, results[ids["test_sub"]])
+  end)
 end)
