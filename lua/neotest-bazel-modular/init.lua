@@ -67,7 +67,10 @@ function Adapter.build_spec(args)
   if not s then
     return nil
   end
-  local root = Adapter.root(position.path)
+  -- Pass the file's directory, not the file: neotest always calls root() with
+  -- a directory (and the `root` option documents that contract), so a custom
+  -- resolver must see the same thing here.
+  local root = Adapter.root(vim.fn.fnamemodify(position.path, ":h"))
   if not root then
     return nil
   end
