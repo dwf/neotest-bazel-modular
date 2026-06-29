@@ -11,6 +11,11 @@ local function read_file(path)
 end
 
 -- Recursively collect every test.xml under `dir` (handles sharded Bazel targets).
+--
+-- Recursion is gated on the scandir entry type being "directory", which does
+-- not follow symlinks (a symlinked dir reports as "link" and would be skipped).
+-- That is fine here: within a target's testlogs Bazel writes plain files and
+-- shard subdirectories, never symlinks, so we never need to traverse one.
 local function find_xml_files(dir)
   local uv = vim.uv or vim.loop
   local files = {}
