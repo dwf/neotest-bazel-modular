@@ -243,17 +243,24 @@ Walks up from the test file's directory toward the workspace root, checking
 each directory for `BUILD.bazel` first (preferred over `BUILD` per
 [Bazel's own documentation](https://bazel.build/concepts/build-files)), then
 `BUILD`.  The first file found is parsed with the Starlark treesitter grammar;
-the adapter scans every rule call for one whose `srcs` list contains the test
-file's path relative to the BUILD file's directory, and returns that rule's
-`name`.
+the adapter scans every rule call for one whose literal `srcs` (a list or a
+bare string) contains the test file's path relative to the BUILD file's
+directory, and returns that rule's `name`.
 
 **Advantages:** pure file I/O + treesitter, no subprocess spawned, no Bazel
 daemon required, resolves immediately.
 
-**Limitation:** only literal `srcs` lists are understood.  If your BUILD file
-uses `glob()` or stores file paths in a variable, the adapter will not find a
-match and `build_spec` returns nil (neotest falls back to running sub-positions
-individually).  Switch to `"query"` if your BUILD files rely on `glob()`.
+**Limitations:**
+
+- Only literal `srcs` are understood (a list or a single string).  If your
+  BUILD file uses `glob()` or stores file paths in a variable, the adapter will
+  not find a match and `build_spec` returns nil (neotest falls back to running
+  sub-positions individually).  Switch to `"query"` if your BUILD files rely on
+  `glob()`.
+- The matched call's `name` is assumed to be the runnable target label.  This
+  holds for plain rules and for macros that create a primary target named
+  exactly `name`, but not for macros that derive target names from it (e.g.
+  `name .. "_test"`).  Use `"query"` for those.
 
 ### `"query"`
 
@@ -307,7 +314,7 @@ The test suite uses a minimal in-process runner (`tests/run.lua`) rather than pl
 
 - Only Python is supported today; the router pattern is designed to make adding further languages straightforward
 - Test filtering uses `--test_filter=%s` by default, which sets `TESTBRIDGE_TEST_ONLY` in the test environment — Bazel's standard mechanism, honoured by runners that read that variable (e.g. a pytest setup wired to consume it).  Note that `rules_python`'s plain `unittest` runner does **not** read `TESTBRIDGE_TEST_ONLY`; its bootstrap simply forwards arguments to the test as `sys.argv`, so to filter a single test you must set `filter_arg = "--test_arg=%s"` (which passes the filter that `unittest` itself parses)
-- `"treesitter"` resolution does not handle `glob()` or non-literal `srcs` expressions; use `target_resolver = "query"` for those BUILD files
+- `"treesitter"` resolution does not handle `glob()` or non-literal `srcs` expressions, and assumes the matched rule's `name` is the runnable target (so macros that derive target names from `name` are not resolved); use `target_resolver = "query"` for those BUILD files
 - `"query"` resolution picks one target arbitrarily (via `head -1`) when a file appears in multiple targets
 
 ## Acknowledgements

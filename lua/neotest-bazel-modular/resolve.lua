@@ -98,6 +98,11 @@ local function target_name_from_build(build_path, src_path)
                     break
                   end
                 end
+              elseif key == "srcs" and v:type() == "string" then
+                -- Bazel also allows a bare string srcs (srcs = "test_foo.py").
+                if strip_quotes(vim.treesitter.get_node_text(v, content)) == src_path then
+                  in_srcs = true
+                end
               end
             end
           end
@@ -115,6 +120,13 @@ end
 
 -- Resolve by parsing the nearest BUILD.bazel/BUILD file with treesitter.
 -- Pure file I/O - no subprocess, no Bazel daemon required.
+--
+-- Returns the `name` of the first rule call whose literal srcs (a list or a
+-- bare string) contains the file, and assumes that name is the runnable target
+-- label.  That holds for plain rules and for macros that create a primary
+-- target named exactly `name`, but NOT for macros that derive target names
+-- from `name` (e.g. name .. "_test") -- those need target_resolver = "query".
+--
 -- Does not handle glob() or non-literal srcs expressions; returns nil for
 -- those (the caller should fall back or report no target found).
 function M.treesitter(path, root)
