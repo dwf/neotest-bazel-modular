@@ -59,6 +59,49 @@ local function each_testcase(data, fn)
   end
 end
 
+-- Index the position tree neotest hands us so JUnit testcases can be matched
+-- to the canonical position IDs assigned at discovery time.  This avoids
+-- reconstructing those IDs from the XML, which would hardcode neotest's "::"
+-- ID format and the "last classname component is the class" heuristic.
+--   by_class_method: "ClassName.test_method" -> position id
+--   by_method:       "test_method" -> { position id, ... }
+local function index_positions(tree)
+  local by_class_method = {}
+  local by_method = {}
+  for _, node in tree:iter_nodes() do
+    local data = node:data()
+    if data.type == "test" then
+      by_method[data.name] = by_method[data.name] or {}
+      table.insert(by_method[data.name], data.id)
+      local parent = node:parent()
+      if parent and parent:data().type == "namespace" then
+        by_class_method[parent:data().name .. "." .. data.name] = data.id
+      end
+    end
+  end
+  return by_class_method, by_method
+end
+
+-- Map a JUnit <testcase classname=… name=…> to a neotest position ID.
+local function find_id(classname, name, by_class_method, by_method)
+  -- JUnit classname is dotted (e.g. "pkg.module.ClassName"); the class is its
+  -- last component.
+  local class = classname and classname:match("([^.]+)$")
+  if class then
+    local id = by_class_method[class .. "." .. name]
+    if id then
+      return id
+    end
+  end
+  -- Fall back to the method name when it is unique across the tree (covers
+  -- top-level functions, which have no namespace parent).
+  local ids = by_method[name]
+  if ids and #ids == 1 then
+    return ids[1]
+  end
+  return nil
+end
+
 local M = {}
 
 -- Collect test results from JUnit XML files under bazel-testlogs.
@@ -67,15 +110,12 @@ local M = {}
 -- time).  This function locates the testlogs directory for that target and
 -- recurses into it collecting every test.xml (handles sharded Bazel targets).
 --
--- Position IDs are built as:
---   file_path .. "::" .. last_classname_component .. "::" .. testname
--- which matches the IDs that lib.treesitter.parse_positions assigns when the
--- neotest-python treesitter query (or any query with @namespace.name /
--- @test.name captures) is used.
+-- Each <testcase> is matched back to a position in `tree` (see
+-- index_positions / find_id) so results carry neotest's own position IDs.
 --
 -- spec.context fields used: root, testlogs_symlink, target
 --
--- Returns table<string, {status}>, or nil when no target is set or no
+-- Returns table<position_id, {status}>, or nil when no target is set or no
 -- test.xml files exist under the testlogs directory.
 function M.collect(spec, result, tree)
   local target = spec.context.target
@@ -95,8 +135,8 @@ function M.collect(spec, result, tree)
     return nil
   end
 
+  local by_class_method, by_method = index_positions(tree)
   local results = {}
-  local file_path = tree:data().path
 
   for _, xml_path in ipairs(xml_files) do
     local xml = read_file(xml_path)
@@ -105,11 +145,13 @@ function M.collect(spec, result, tree)
       if ok then
         each_testcase(data, function(tc)
           local attr = tc._attr
-          if attr and attr.classname and attr.name then
-            local short_class = attr.classname:match("([^.]+)$") or attr.classname
-            results[file_path .. "::" .. short_class .. "::" .. attr.name] = {
-              status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed",
-            }
+          if attr and attr.name then
+            local id = find_id(attr.classname, attr.name, by_class_method, by_method)
+            if id then
+              results[id] = {
+                status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed",
+              }
+            end
           end
         end)
       end
