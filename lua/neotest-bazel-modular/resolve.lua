@@ -40,8 +40,13 @@ local function find_build_file(dir, root)
 end
 
 -- Parse build_path with the starlark treesitter grammar and return the `name`
--- of the first rule whose `srcs` list contains src_path (relative to the
--- directory containing the BUILD file), or nil.
+-- of a rule whose `srcs` contains src_path (relative to the directory
+-- containing the BUILD file), or nil.
+--
+-- Among matching rules, prefer one whose kind ends in "_test" (py_test,
+-- cc_test, go_test, ...) so a file also listed in a filegroup or library does
+-- not resolve to a non-test target.  Fall back to the first match of any kind,
+-- since a custom test macro may not follow the _test naming convention.
 local function target_name_from_build(build_path, src_path)
   local lines = vim.fn.readfile(build_path)
   if not lines or #lines == 0 then
@@ -59,6 +64,7 @@ local function target_name_from_build(build_path, src_path)
   end
   local root_node = tree:root()
 
+  local first_match
   for i = 0, root_node:named_child_count() - 1 do
     local stmt = root_node:named_child(i)
     -- Top-level BUILD statements are expression_statements wrapping a call.
@@ -69,6 +75,10 @@ local function target_name_from_build(build_path, src_path)
       call = stmt
     end
     if call and call:type() == "call" then
+      -- The starlark grammar puts the callee first, then the argument_list.
+      -- get_node_text handles both `py_test` and `native.py_test`.
+      local fn = call:named_child(0)
+      local kind = fn and vim.treesitter.get_node_text(fn, content) or ""
       local args
       for ci = 0, call:named_child_count() - 1 do
         local c = call:named_child(ci)
@@ -108,12 +118,15 @@ local function target_name_from_build(build_path, src_path)
           end
         end
         if rule_name and in_srcs then
-          return rule_name
+          first_match = first_match or rule_name
+          if kind:match("_test$") then
+            return rule_name
+          end
         end
       end
     end
   end
-  return nil
+  return first_match
 end
 
 -- public resolvers
@@ -126,6 +139,12 @@ end
 -- label.  That holds for plain rules and for macros that create a primary
 -- target named exactly `name`, but NOT for macros that derive target names
 -- from `name` (e.g. name .. "_test") -- those need target_resolver = "query".
+--
+-- Among matching rules it prefers one whose kind ends in "_test", so a file
+-- also listed in a filegroup or library does not resolve to a non-test target.
+-- This is a heuristic, not the query resolver's exact tests(//...) scoping: a
+-- test rule whose kind does not end in "_test" is only chosen as a fallback,
+-- and if the sole match is a non-test rule its label is still returned.
 --
 -- Does not handle glob() or non-literal srcs expressions; returns nil for
 -- those (the caller should fall back or report no target found).
@@ -150,6 +169,11 @@ end
 -- Resolve by running `bazel query attr(srcs,...)` synchronously.
 -- Handles glob() and any other Bazel expression in srcs, but requires a
 -- running Bazel daemon.  When multiple targets match, returns the first one.
+--
+-- The query is scoped to tests(//...) rather than //... so it only ever
+-- returns runnable test targets -- otherwise a file also listed in a
+-- filegroup or library could resolve to a non-test target that `bazel test`
+-- rejects.  tests() also expands test_suite targets to their constituent tests.
 function M.query(path, root, bazel)
   local rel_path = path:sub(#root + 2)
   local pkg = vim.fn.fnamemodify(rel_path, ":h")
@@ -161,7 +185,7 @@ function M.query(path, root, bazel)
   local file_label = "//" .. pkg .. ":" .. base_name:gsub("%.", "\\.")
   local out = vim.fn.system(
     string.format(
-      "cd %s && %s query \"attr(srcs, '%s', //...)\" 2>/dev/null | head -1",
+      "cd %s && %s query \"attr(srcs, '%s', tests(//...))\" 2>/dev/null | head -1",
       vim.fn.shellescape(root),
       bazel,
       file_label

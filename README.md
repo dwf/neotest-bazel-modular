@@ -261,6 +261,12 @@ daemon required, resolves immediately.
   holds for plain rules and for macros that create a primary target named
   exactly `name`, but not for macros that derive target names from it (e.g.
   `name .. "_test"`).  Use `"query"` for those.
+- Rule kind is matched only heuristically: among the rules listing the file,
+  one whose kind ends in `_test` (`py_test`, `cc_test`, …) is preferred, so a
+  file also listed in a `filegroup` or library normally resolves to the test
+  rule.  But a test rule whose kind does not end in `_test` is only a fallback,
+  and if the *sole* match is a non-test rule its label is still returned.  The
+  `"query"` resolver scopes to `tests(//...)` and has neither caveat.
 
 ### `"query"`
 
@@ -268,8 +274,13 @@ Runs the following synchronously inside `build_spec` before issuing the test
 command:
 
 ```sh
-bazel query "attr(srcs, '//pkg:file\.py', //...)" 2>/dev/null | head -1
+bazel query "attr(srcs, '//pkg:file\.py', tests(//...))" 2>/dev/null | head -1
 ```
+
+The universe is scoped to `tests(//...)` rather than `//...`, so the query only
+ever returns runnable test targets — a file also listed in a `filegroup` or
+library can't resolve to a non-test target that `bazel test` would reject.
+`tests()` additionally expands `test_suite` targets to their constituent tests.
 
 **Advantages:** handles `glob()`, variable references, and any other expression
 Bazel evaluates; resolves a target even when the file appears under multiple

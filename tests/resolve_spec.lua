@@ -82,6 +82,27 @@ py_test(name = "mine", srcs = ["a.py", "test_mine.py", "b.py"])
     assert.are.equal("//:mine", resolve.treesitter(root .. "/test_mine.py", root))
   end)
 
+  it("prefers a _test rule over a filegroup listing the same file", function()
+    local root = workspace()
+    write_build(
+      root,
+      "",
+      [[
+filegroup(name = "test_srcs", srcs = ["test_foo.py"])
+py_test(name = "foo", srcs = ["test_foo.py"])
+]]
+    )
+    -- The filegroup appears first, but the _test rule is preferred.
+    assert.are.equal("//:foo", resolve.treesitter(root .. "/test_foo.py", root))
+  end)
+
+  it("falls back to a non-test rule when it is the only match", function()
+    local root = workspace()
+    write_build(root, "", [[filegroup(name = "test_srcs", srcs = ["test_foo.py"])]])
+    -- No _test rule lists the file, so the only match is returned as-is.
+    assert.are.equal("//:test_srcs", resolve.treesitter(root .. "/test_foo.py", root))
+  end)
+
   it("prefers BUILD.bazel over BUILD when both exist", function()
     local root = workspace()
     write_build(root, "", [[py_test(name = "from_plain", srcs = ["t.py"])]], "BUILD")
