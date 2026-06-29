@@ -1,5 +1,12 @@
 local lib = require("neotest.lib")
 
+-- This adapter is intentionally a process-wide singleton: configuration lives
+-- in module-level state (`registry`, `ignore_dirs`, `Adapter.root`) that __call
+-- replaces in place, and the module returns that one Adapter table.  neotest
+-- identifies adapters by `name`, and a Bazel workspace wants a single config,
+-- so one configured instance per session is the intended model.  Calling the
+-- module a second time reconfigures that instance rather than making another.
+
 -- Registry of active sub-adapter instances, keyed by file extension.
 -- Populated lazily on first use (unconfigured defaults) or eagerly by __call.
 local registry = {}
