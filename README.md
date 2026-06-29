@@ -243,9 +243,11 @@ Walks up from the test file's directory toward the workspace root, checking
 each directory for `BUILD.bazel` first (preferred over `BUILD` per
 [Bazel's own documentation](https://bazel.build/concepts/build-files)), then
 `BUILD`.  The first file found is parsed with the Starlark treesitter grammar;
-the adapter scans every rule call for one whose literal `srcs` (a list or a
-bare string) contains the test file's path relative to the BUILD file's
-directory, and returns that rule's `name`.
+the adapter scans every rule call whose literal `srcs` (a list or a bare
+string) contains the test file's path relative to the BUILD file's directory.
+Among those matches it prefers a rule whose kind ends in `_test` (`py_test`,
+`cc_test`, …) — falling back to the first match of any kind — and returns that
+rule's `name`.
 
 **Advantages:** pure file I/O + treesitter, no subprocess spawned, no Bazel
 daemon required, resolves immediately.
