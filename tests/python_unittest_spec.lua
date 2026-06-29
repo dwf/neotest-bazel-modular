@@ -29,6 +29,34 @@ local function ids_by_name(tree)
   return ids
 end
 
+-- A tree with the SAME method name in two classes, so the unique-method-name
+-- fallback cannot resolve it -- forcing find_id to extract the class correctly.
+local function build_dup_tree()
+  local positions = {
+    { type = "file", path = PATH, name = "test_foo.py", range = { 0, 0, 100, 0 } },
+    { type = "namespace", path = PATH, name = "TestMath", range = { 0, 0, 10, 0 } },
+    { type = "test", path = PATH, name = "test_dup", range = { 1, 0, 2, 0 } },
+    { type = "namespace", path = PATH, name = "TestPhys", range = { 11, 0, 20, 0 } },
+    { type = "test", path = PATH, name = "test_dup", range = { 12, 0, 13, 0 } },
+  }
+  return lib.positions.parse_tree(positions, {})
+end
+
+-- Map "Class.method" -> id (needed when method names are not unique).
+local function ids_by_class_method(tree)
+  local ids = {}
+  for _, node in tree:iter_nodes() do
+    local d = node:data()
+    if d.type == "test" then
+      local parent = node:parent()
+      if parent and parent:data().type == "namespace" then
+        ids[parent:data().name .. "." .. d.name] = d.id
+      end
+    end
+  end
+  return ids
+end
+
 -- Build a fake neotest `result` with the given exit code and (optional) log
 -- text written to result.output.
 local function result_with(code, log)
@@ -109,5 +137,42 @@ describe("results.python_unittest collect", function()
       { type = "file", path = PATH, name = "test_foo.py", range = { 0, 0, 1, 0 } },
     }, {})
     assert.is_nil(unittest.collect({}, result_with(0, nil), empty))
+  end)
+
+  -- The qualified name has an UPPERCASE package component (Acme), and the
+  -- method name is duplicated across two classes, so the only way to attribute
+  -- the failure correctly is to extract the class positionally.
+  it("attributes the failure to the right class with an uppercase package (3.12+ form)", function()
+    local dup = build_dup_tree()
+    local ids = ids_by_class_method(dup)
+    local log = table.concat({
+      "F.",
+      "FAIL: test_dup (Acme.mathlib.TestPhys.test_dup)",
+      "----------------------------------------------------------------------",
+      "Ran 2 tests in 0.001s",
+      "",
+      "FAILED (failures=1)",
+      "",
+    }, "\n")
+    local r = unittest.collect({}, result_with(3, log), dup)
+    assert.are.same({ status = "failed" }, r[ids["TestPhys.test_dup"]])
+    assert.are.same({ status = "passed" }, r[ids["TestMath.test_dup"]])
+  end)
+
+  it("attributes the failure with the older module.Class form", function()
+    local dup = build_dup_tree()
+    local ids = ids_by_class_method(dup)
+    local log = table.concat({
+      "F.",
+      "FAIL: test_dup (Acme.mathlib.TestPhys)",
+      "----------------------------------------------------------------------",
+      "Ran 2 tests in 0.001s",
+      "",
+      "FAILED (failures=1)",
+      "",
+    }, "\n")
+    local r = unittest.collect({}, result_with(3, log), dup)
+    assert.are.same({ status = "failed" }, r[ids["TestPhys.test_dup"]])
+    assert.are.same({ status = "passed" }, r[ids["TestMath.test_dup"]])
   end)
 end)

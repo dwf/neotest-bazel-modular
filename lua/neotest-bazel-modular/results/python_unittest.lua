@@ -46,8 +46,17 @@ local function find_id(desc, by_class_method, by_method)
 
   local qualified = desc:match("%(([^)]+)%)")
   if qualified then
-    -- Class names start uppercase; module components are lowercase.
-    local class = qualified:match("[A-Z]%w*")
+    -- The class is positional, not case-based: split the dotted qualified
+    -- name and take the component before the method (3.12+ "module.Class.method")
+    -- or the last component (older "module.Class").  Relying on capitalisation
+    -- would mis-pick an uppercase-named module/package component.
+    local parts = vim.split(qualified, ".", { plain = true })
+    local class
+    if parts[#parts] == method and #parts >= 2 then
+      class = parts[#parts - 1]
+    else
+      class = parts[#parts]
+    end
     if class then
       local id = by_class_method[class .. "." .. method]
       if id then
