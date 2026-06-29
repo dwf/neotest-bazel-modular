@@ -1,0 +1,122 @@
+local lib = require("neotest.lib")
+
+local function read_file(path)
+  local f = io.open(path, "r")
+  if not f then
+    return nil
+  end
+  local data = f:read("*a")
+  f:close()
+  return data
+end
+
+-- Recursively collect every test.xml under `dir` (handles sharded Bazel targets).
+local function find_xml_files(dir)
+  local uv = vim.uv or vim.loop
+  local files = {}
+  local handle = uv.fs_scandir(dir)
+  if not handle then
+    return files
+  end
+  while true do
+    local name, ftype = uv.fs_scandir_next(handle)
+    if not name then
+      break
+    end
+    local full_path = dir .. "/" .. name
+    if ftype == "directory" then
+      for _, f in ipairs(find_xml_files(full_path)) do
+        files[#files + 1] = f
+      end
+    elseif name == "test.xml" then
+      files[#files + 1] = full_path
+    end
+  end
+  return files
+end
+
+-- Normalise xml2lua's single-element reduction at both the testsuite and
+-- testcase levels so the caller can always iterate a plain array.
+local function each_testcase(data, fn)
+  local root = data.testsuites or data
+  local suites = root.testsuite
+  if not suites then
+    return
+  end
+  if suites._attr then
+    suites = { suites }
+  end
+  for _, suite in ipairs(suites) do
+    local tcs = suite.testcase
+    if tcs then
+      if tcs._attr then
+        tcs = { tcs }
+      end
+      for _, tc in ipairs(tcs) do
+        fn(tc)
+      end
+    end
+  end
+end
+
+local M = {}
+
+-- Collect test results from JUnit XML files under bazel-testlogs.
+--
+-- The Bazel target is read from spec.context.target (resolved at build_spec
+-- time).  This function locates the testlogs directory for that target and
+-- recurses into it collecting every test.xml (handles sharded Bazel targets).
+--
+-- Position IDs are built as:
+--   file_path .. "::" .. last_classname_component .. "::" .. testname
+-- which matches the IDs that lib.treesitter.parse_positions assigns when the
+-- neotest-python treesitter query (or any query with @namespace.name /
+-- @test.name captures) is used.
+--
+-- spec.context fields used: root, testlogs_symlink, target
+--
+-- Returns table<string, {status}>, or nil when no target is set or no
+-- test.xml files exist under the testlogs directory.
+function M.collect(spec, result, tree)
+  local target = spec.context.target
+  if not target then
+    return nil
+  end
+
+  local tpkg, tname = target:match("//([^:]*):(.+)")
+  if not tpkg or not tname then
+    return nil
+  end
+
+  local testlogs_dir = spec.context.root .. "/" .. spec.context.testlogs_symlink .. "/" .. tpkg .. "/" .. tname
+
+  local xml_files = find_xml_files(testlogs_dir)
+  if #xml_files == 0 then
+    return nil
+  end
+
+  local results = {}
+  local file_path = tree:data().path
+
+  for _, xml_path in ipairs(xml_files) do
+    local xml = read_file(xml_path)
+    if xml then
+      local ok, data = pcall(lib.xml.parse, xml)
+      if ok then
+        each_testcase(data, function(tc)
+          local attr = tc._attr
+          if attr and attr.classname and attr.name then
+            local short_class = attr.classname:match("([^.]+)$") or attr.classname
+            results[file_path .. "::" .. short_class .. "::" .. attr.name] = {
+              status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed",
+            }
+          end
+        end)
+      end
+    end
+  end
+
+  return not vim.tbl_isempty(results) and results or nil
+end
+
+return M
