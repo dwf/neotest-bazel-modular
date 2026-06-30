@@ -143,4 +143,49 @@ describe("Adapter configuration via __call", function()
 
     Adapter({})
   end)
+
+  it("uses discovery_root for discovery and bazel_workspace_root for build_spec", function()
+    local captured_root
+    local fake = function(_cfg)
+      return {
+        is_test_file = function()
+          return true
+        end,
+        discover_positions = function() end,
+        build_spec = function(_args, root)
+          captured_root = root
+          return { captured = root }
+        end,
+        results = function()
+          return {}
+        end,
+      }
+    end
+
+    Adapter({
+      discovery_root = function()
+        return "/PROJECT"
+      end,
+      bazel_workspace_root = function()
+        return "/WORKSPACE"
+      end,
+      python = fake,
+    })
+
+    -- neotest's discovery root reflects discovery_root.
+    assert.are.equal("/PROJECT", Adapter.root("/repo/pkg"))
+
+    -- build_spec resolves against the bazel workspace root instead.
+    local args = {
+      tree = {
+        data = function()
+          return { path = "/repo/pkg/test_x.py" }
+        end,
+      },
+    }
+    Adapter.build_spec(args)
+    assert.are.equal("/WORKSPACE", captured_root)
+
+    Adapter({})
+  end)
 end)

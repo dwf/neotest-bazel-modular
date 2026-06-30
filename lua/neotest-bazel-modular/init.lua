@@ -47,10 +47,24 @@ end
 
 local Adapter = { name = "neotest-bazel-modular" }
 
--- Walk upward from the file to find the Bazel workspace root.
--- Replaced by opts.root when __call is invoked with a custom function.
-local default_root = lib.files.match_root_pattern("MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE")
-Adapter.root = default_root
+-- Two distinct roots, each replaced by its own opt in __call:
+--
+--   bazel_workspace_root -- the Bazel workspace root (MODULE.bazel /
+--     WORKSPACE.bazel / WORKSPACE).  build_spec uses it for the test command's
+--     cwd, for computing the //pkg:target label, and for locating
+--     bazel-testlogs.  Not neotest's discovery root.
+--
+--   Adapter.root (the "discovery root") -- the directory neotest treats as the
+--     top of the tree it scans for test files.  In a large monorepo the Bazel
+--     workspace root can be enormous and scanning all of it is far too slow, so
+--     this is kept separate and overridable to scope discovery to a subtree
+--     (e.g. the nearest BUILD file's directory).  Defaults to the Bazel
+--     workspace root.
+local default_bazel_workspace_root = lib.files.match_root_pattern("MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE")
+local bazel_workspace_root = default_bazel_workspace_root
+
+local default_discovery_root = default_bazel_workspace_root
+Adapter.root = default_discovery_root
 
 function Adapter.filter_dir(name, rel_path, root)
   return not dir_is_ignored(name)
@@ -74,10 +88,11 @@ function Adapter.build_spec(args)
   if not s then
     return nil
   end
-  -- Pass the file's directory, not the file: neotest always calls root() with
-  -- a directory (and the `root` option documents that contract), so a custom
-  -- resolver must see the same thing here.
-  local root = Adapter.root(vim.fn.fnamemodify(position.path, ":h"))
+  -- Resolve against the Bazel workspace root, not the discovery root neotest
+  -- scanned with: the cwd, the //pkg:target label, and the testlogs path are
+  -- all relative to the workspace.  Pass the file's directory, matching the
+  -- root() calling convention (a directory, not the file).
+  local root = bazel_workspace_root(vim.fn.fnamemodify(position.path, ":h"))
   if not root then
     return nil
   end
@@ -95,13 +110,20 @@ end
 -- Configuration entrypoint.
 --
 -- opts fields:
---   root             (function)  function(dir: string): string|nil
---                                Custom workspace-root finder.  Receives the
---                                directory of the file being tested and must
---                                return an absolute path to the workspace root,
---                                or nil when no root is found.  Defaults to
---                                walking up looking for MODULE.bazel /
---                                WORKSPACE.bazel / WORKSPACE.
+--   discovery_root     (function)  function(dir: string): string|nil
+--                                The root neotest scans for test files (i.e.
+--                                Adapter.root).  Override to scope discovery to
+--                                a subtree in a large monorepo (e.g. the nearest
+--                                BUILD file's directory) rather than walking the
+--                                whole Bazel workspace.  Defaults to the Bazel
+--                                workspace root.
+--   bazel_workspace_root
+--                    (function)  function(dir: string): string|nil
+--                                The Bazel workspace root used by build_spec for
+--                                the test command's cwd, the //pkg:target label,
+--                                and locating bazel-testlogs.  Defaults to
+--                                walking up for MODULE.bazel / WORKSPACE.bazel /
+--                                WORKSPACE.
 --   bazel_binary     (string)    bazel executable passed to every sub-adapter,
 --                                default "bazel"
 --   target_resolver  (string)    how the Bazel target is resolved for each file:
@@ -142,7 +164,9 @@ end
 setmetatable(Adapter, {
   __call = function(_, opts)
     opts = opts or {}
-    Adapter.root = type(opts.root) == "function" and opts.root or default_root
+    Adapter.root = type(opts.discovery_root) == "function" and opts.discovery_root or default_discovery_root
+    bazel_workspace_root = type(opts.bazel_workspace_root) == "function" and opts.bazel_workspace_root
+      or default_bazel_workspace_root
     local bazel_binary = opts.bazel_binary or "bazel"
     local target_resolver = opts.target_resolver or "treesitter"
     local testlogs_symlink = opts.testlogs_symlink or "bazel-testlogs"

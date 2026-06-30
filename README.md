@@ -124,12 +124,22 @@ require("neotest").setup({
 
 ```lua
 require("neotest-bazel-modular")({
-  -- Custom workspace-root finder.  Receives the directory of the file being
-  -- tested; must return an absolute path to the workspace root or nil.
+  -- The root neotest scans for test files (i.e. the adapter's `root`).  In a
+  -- large monorepo the Bazel workspace root can be enormous and scanning all of
+  -- it is far too slow, so scope discovery to a subtree here.  Receives the
+  -- directory of the file being tested; returns an absolute path or nil.
+  -- Default: the Bazel workspace root.  Example — scope to the nearest package:
+  discovery_root = function(dir)
+    return require("neotest.lib").files.match_root_pattern("BUILD.bazel", "BUILD")(dir)
+  end,
+
+  -- The Bazel workspace root, used to set the `bazel test` cwd, compute the
+  -- //pkg:target label, and locate bazel-testlogs.  Override only if your
+  -- workspace marker isn't one of the defaults.  Receives a directory; returns
+  -- an absolute path or nil.
   -- Default: walk up looking for MODULE.bazel / WORKSPACE.bazel / WORKSPACE.
-  root = function(dir)
-    -- example: require a marker file that the defaults don't know about
-    return require("neotest.lib").files.match_root_pattern("my-workspace-marker")(dir)
+  bazel_workspace_root = function(dir)
+    return require("neotest.lib").files.match_root_pattern("MODULE.bazel")(dir)
   end,
 
   -- Bazel executable. Useful if you use e.g. bazelisk or a wrapper script.
