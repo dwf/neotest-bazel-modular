@@ -18,8 +18,18 @@
         pkgs = nixpkgs.legacyPackages.${system};
         python = pkgs.python312.withPackages (ps: [ ps.pytest ]);
 
-        # nvim-treesitter Lua files and grammars must share a single rtp entry
-        # so neotest's subprocess finds both the Lua runtime and parser/ dir.
+        # Merge the nvim-treesitter Lua runtime and the compiled grammars into a
+        # single store path so they share one runtimepath entry.
+        #
+        # neotest parses positions in a subprocess (a child Neovim spawned via
+        # nio), which rebuilds its own rtp by discovering tree-sitter plugin
+        # roots -- directories that contain a parser/ dir.  When the grammars are
+        # a separate derivation from the nvim-treesitter Lua (as withPlugins and
+        # the separate grammarPlugins produce), the child picks up the grammar
+        # root (it has parser/) but NOT the Lua root, so require("nvim-treesitter")
+        # fails in the child and the failure leaks out as an async error through
+        # nio rather than a clean message.  symlinkJoin puts lua/ and parser/
+        # under one root, so the single rtp entry the child finds has both.
         nvim-treesitter-with-grammars = pkgs.symlinkJoin {
           name = "nvim-treesitter-with-grammars";
           paths = with pkgs.vimPlugins; [
