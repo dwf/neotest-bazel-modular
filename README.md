@@ -156,6 +156,11 @@ require("neotest-bazel-modular")({
   --   "bazel-*"      — Bazel output symlinks (bazel-bin, bazel-out, …)
   ignore_dirs = { ".git", "node_modules", "vendor", "bazel-*", "_build" },
 
+  -- Name of the bazel-testlogs convenience symlink under the workspace root,
+  -- where the JUnit XML results collector reads test.xml from.  Global only.
+  -- Default: "bazel-testlogs".
+  testlogs_symlink = "bazel-testlogs",
+
   -- Per-language configuration.  Each key accepts either a config table
   -- (merged with defaults) or a factory function (replaces the built-in
   -- sub-adapter entirely).

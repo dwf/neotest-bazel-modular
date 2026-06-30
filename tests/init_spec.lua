@@ -117,4 +117,30 @@ describe("Adapter configuration via __call", function()
     -- Restore default so other tests are not affected.
     Adapter({})
   end)
+
+  it("threads the global testlogs_symlink into sub-adapter factories", function()
+    local seen
+    local capture = function(cfg)
+      seen = cfg
+      return { is_test_file = function() end }
+    end
+
+    Adapter({ testlogs_symlink = "custom-testlogs", python = capture })
+    assert.are.equal("custom-testlogs", seen.testlogs_symlink)
+
+    Adapter({})
+  end)
+
+  it("defaults testlogs_symlink to bazel-testlogs when unset", function()
+    local seen
+    local capture = function(cfg)
+      seen = cfg
+      return { is_test_file = function() end }
+    end
+
+    Adapter({ python = capture })
+    assert.are.equal("bazel-testlogs", seen.testlogs_symlink)
+
+    Adapter({})
+  end)
 end)

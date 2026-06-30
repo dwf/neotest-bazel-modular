@@ -118,6 +118,10 @@ end
 --                                Replaces the defaults entirely when supplied.
 --                                Default: { ".git", "node_modules", "vendor",
 --                                           "bazel-*" }
+--   testlogs_symlink (string)    name of the bazel-testlogs convenience symlink
+--                                under the workspace root, where JUnit XML is
+--                                read from.  Global only (not per-language).
+--                                Default: "bazel-testlogs"
 --   python           (table|function)
 --                                table - config overrides forwarded to the
 --                                  built-in Python factory (args, is_test_file, ...)
@@ -141,13 +145,15 @@ setmetatable(Adapter, {
     Adapter.root = type(opts.root) == "function" and opts.root or default_root
     local bazel_binary = opts.bazel_binary or "bazel"
     local target_resolver = opts.target_resolver or "treesitter"
+    local testlogs_symlink = opts.testlogs_symlink or "bazel-testlogs"
     ignore_dirs = opts.ignore_dirs or DEFAULT_IGNORE_DIRS
 
     -- (Re-)populate the registry with freshly configured instances.
     -- Per-language opts can be either a config table or an alternate factory
     -- function; in the latter case it replaces the built-in factory entirely.
     -- target_resolver is part of the base config so language configs can
-    -- override it individually.
+    -- override it individually; testlogs_symlink is global, applied after the
+    -- per-language merge so a sub-config cannot shadow it.
     local lang_opts = {
       py = opts.python,
     }
@@ -155,12 +161,17 @@ setmetatable(Adapter, {
     for ext, factory in pairs(factories) do
       local lo = lang_opts[ext]
       if type(lo) == "function" then
-        registry[ext] = lo({ bazel_binary = bazel_binary, target_resolver = target_resolver })
+        registry[ext] = lo({
+          bazel_binary = bazel_binary,
+          target_resolver = target_resolver,
+          testlogs_symlink = testlogs_symlink,
+        })
       else
         local cfg = vim.tbl_extend("force", {
           bazel_binary = bazel_binary,
           target_resolver = target_resolver,
         }, lo or {})
+        cfg.testlogs_symlink = testlogs_symlink
         registry[ext] = factory(cfg)
       end
     end
