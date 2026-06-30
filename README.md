@@ -44,7 +44,7 @@ without JUnit XML — and doubles as a template for writing your own; see
 - [neotest](https://github.com/nvim-neotest/neotest)
 - [nvim-nio](https://github.com/nvim-neotest/nvim-nio)
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
-- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with the `python` and `starlark` parsers installed
+- The `python` and `starlark` tree-sitter parsers available to Neovim (the adapter uses the built-in `vim.treesitter`, so the `nvim-treesitter` plugin itself is not required — though `:TSInstall python starlark` is the easy way to install the parsers; under Nix, depend on `vimPlugins.nvim-treesitter-parsers.{python,starlark}`)
 - [neotest-python](https://github.com/nvim-neotest/neotest-python) — required by the built-in Python sub-adapter for `is_test_file` and tree-sitter query delegation
 - A working `bazel` (or `bazelisk`) binary on `$PATH`
 
