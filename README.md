@@ -236,6 +236,33 @@ require("neotest-bazel-modular")({
 })
 ```
 
+`results/xml_python_absl.lua` reads JUnit XML produced by
+[`absl.testing`](https://abseil.io/docs/python/guides/testing).  absl expands a
+parameterized method into many `<testcase>` entries — `test_foo0`, `test_foo1`
+for `@parameterized.parameters`, `test_foo_<name>` for
+`@parameterized.named_parameters`, plus failing `self.subTest(...)` cases — but
+the neotest tree only has the decorated method.  This collector maps each
+`<testcase>` back to the source method whose name it starts with (exact match
+first, otherwise the longest prefix) and aggregates: **any** failing case or
+subtest fails the parent method.  It handles sharding like `results/xml.lua`.
+
+```lua
+require("neotest-bazel-modular")({
+  python = {
+    results_collector = require("neotest-bazel-modular.results.xml_python_absl").collect,
+  },
+})
+```
+
+> The longest-prefix match is a heuristic: it can't reliably disambiguate when
+> one method's name is a parameterized expansion of another's in the same class
+> (e.g. a real `test_foo1` vs. `test_foo`'s case 1).  Exact names are matched to
+> their own method first; the rest fall back to longest prefix.
+
+Both `results/xml.lua` and `results/xml_python_absl.lua` share the JUnit
+plumbing in `results/junit.lua` (testlogs resolution, shard walking, `<testcase>`
+iteration), so a new XML-based collector only has to implement the mapping.
+
 #### Replacing a sub-adapter factory
 
 If the config-table overrides are not flexible enough you can supply a full factory function. It receives the merged base config (`{ bazel_binary = "…", target_resolver = "…" }`) and must return a table with `is_test_file`, `discover_positions`, `build_spec`, and `results` methods.
