@@ -90,7 +90,14 @@ function M.collect(spec, result, tree)
     end
   end
 
-  local results = {}
+  -- All positions share the file being tested; use it to resolve traceback
+  -- line numbers.
+  local file_path = tree:data() and tree:data().path
+
+  -- id -> { rank, status, errors }.  A parent's status is the max-rank of its
+  -- cases (failure dominates); one errors entry is accumulated per failing case
+  -- / subtest so the user sees which parameterizations failed.
+  local acc = {}
   local processed = junit.for_each_testcase(spec, function(tc)
     local attr = tc._attr
     if not (attr and attr.name) then
@@ -102,17 +109,36 @@ function M.collect(spec, result, tree)
     if not id then
       return
     end
+
     local status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed"
-    local cur = results[id]
-    if not cur or RANK[status] > RANK[cur.status] then
-      results[id] = { status = status }
+    local e = acc[id]
+    if not e then
+      e = { rank = 0, status = "skipped", errors = {} }
+      acc[id] = e
+    end
+    if RANK[status] > e.rank then
+      e.rank, e.status = RANK[status], status
+    end
+    if status == "failed" then
+      local msg = junit.failure_message(tc)
+      if msg then
+        e.errors[#e.errors + 1] = {
+          message = attr.name .. ": " .. msg,
+          line = junit.failure_line(tc, file_path),
+        }
+      end
     end
   end)
 
-  if not processed then
+  if not processed or next(acc) == nil then
     return nil
   end
-  return not vim.tbl_isempty(results) and results or nil
+
+  local results = {}
+  for id, e in pairs(acc) do
+    results[id] = { status = e.status, errors = (#e.errors > 0) and e.errors or nil }
+  end
+  return results
 end
 
 return M

@@ -79,8 +79,10 @@ describe("results.xml collect — mapping", function()
     assert.are.same({ status = "passed" }, results[ids["test_add"]])
   end)
 
-  it("maps a <failure> testcase to failed", function()
-    assert.are.same({ status = "failed" }, results[ids["test_sub"]])
+  it("maps a <failure> testcase to failed, surfacing the failure message", function()
+    local r = results[ids["test_sub"]]
+    assert.are.equal("failed", r.status)
+    assert.are.same({ { message = "boom" } }, r.errors)
   end)
 
   it("maps a <skipped> testcase to skipped", function()
@@ -137,6 +139,6 @@ describe("results.xml collect — guards", function()
       context = { target = "//:foo", root = root, testlogs_symlink = "bazel-testlogs" },
     }, {}, tree)
     assert.are.same({ status = "passed" }, results[ids["test_add"]])
-    assert.are.same({ status = "failed" }, results[ids["test_sub"]])
+    assert.are.equal("failed", results[ids["test_sub"]].status)
   end)
 end)

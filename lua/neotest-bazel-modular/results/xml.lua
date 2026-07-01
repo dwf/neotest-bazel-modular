@@ -65,9 +65,15 @@ function M.collect(spec, result, tree)
     if attr and attr.name then
       local id = find_id(attr.classname, attr.name, by_class_method, by_method)
       if id then
-        results[id] = {
-          status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed",
-        }
+        local status = (tc.failure or tc.error) and "failed" or tc.skipped and "skipped" or "passed"
+        local res = { status = status }
+        if status == "failed" then
+          local msg = junit.failure_message(tc)
+          if msg then
+            res.errors = { { message = msg } }
+          end
+        end
+        results[id] = res
       end
     end
   end)

@@ -1,7 +1,7 @@
 -- Tests the absl.testing results collector: mapping parameterized/subtest
 -- <testcase> entries back to their decorated source method, aggregating status
--- (any failure fails the parent), disambiguating prefix collisions, and
--- aggregating across shards.
+-- (any failure fails the parent) and failure messages, disambiguating prefix
+-- collisions, aggregating across shards, and parsing traceback line numbers.
 
 local lib = require("neotest.lib")
 local absl = require("neotest-bazel-modular.results.xml_python_absl")
@@ -21,6 +21,7 @@ local function build_tree()
     { type = "test", path = PATH, name = "test_prefix", range = { 9, 0, 10, 0 } },
     { type = "test", path = PATH, name = "test_skipall", range = { 11, 0, 12, 0 } },
     { type = "test", path = PATH, name = "test_withsub", range = { 13, 0, 14, 0 } },
+    { type = "test", path = PATH, name = "test_multi", range = { 15, 0, 16, 0 } },
   }
   return lib.positions.parse_tree(positions, {})
 end
@@ -37,15 +38,15 @@ local function ids_by_name(tree)
 end
 
 -- Build an absl-style <testcase> for class TestMath.
---   kind: "pass" | "fail" | "skip"
-local function tc(name, kind)
-  local body = ""
+--   kind: "pass" | "fail" | "skip"; `body` is the <failure> element text.
+local function tc(name, kind, body)
+  local inner = ""
   if kind == "fail" then
-    body = '<failure message="boom">AssertionError</failure>'
+    inner = ('<failure message="boom">%s</failure>'):format(body or "AssertionError")
   elseif kind == "skip" then
-    body = '<skipped message="nope"></skipped>'
+    inner = '<skipped message="nope"></skipped>'
   end
-  return ('    <testcase classname="__main__.TestMath" name="%s">%s</testcase>'):format(name, body)
+  return ('    <testcase classname="__main__.TestMath" name="%s">%s</testcase>'):format(name, inner)
 end
 
 local function suite(cases)
@@ -94,6 +95,8 @@ describe("results.xml_python_absl collect", function()
       tc("test_withsub", "pass"), -- base passes ...
       tc("test_withsub (widget=1)", "fail"), -- ... but a subtest fails
       tc("test_div0", "pass"), -- test_div: one case per shard
+      tc("test_multi0", "fail"), -- two failing cases -> two errors
+      tc("test_multi1", "fail"),
     })
     local shard2 = suite({
       tc("test_div1", "fail"), -- cross-shard aggregation
@@ -106,17 +109,27 @@ describe("results.xml_python_absl collect", function()
     assert.are.same({ status = "passed" }, results[ids["test_add"]])
   end)
 
-  it("fails a method when a named parameterization fails", function()
-    assert.are.same({ status = "failed" }, results[ids["test_sub"]])
+  it("fails a method when a named parameterization fails, surfacing the case", function()
+    local r = results[ids["test_sub"]]
+    assert.are.equal("failed", r.status)
+    assert.are.same({ { message = "test_sub_negative: boom" } }, r.errors)
   end)
 
   it("fails a method when a subtest fails even though the base passed", function()
-    assert.are.same({ status = "failed" }, results[ids["test_withsub"]])
+    local r = results[ids["test_withsub"]]
+    assert.are.equal("failed", r.status)
+    assert.are.same({ { message = "test_withsub (widget=1): boom" } }, r.errors)
+  end)
+
+  it("accumulates one error entry per failing case", function()
+    local r = results[ids["test_multi"]]
+    assert.are.equal("failed", r.status)
+    assert.are.equal(2, #r.errors)
   end)
 
   it("aggregates parameterizations across shards", function()
     -- test_div0 (shard 1) passed, test_div1 (shard 2) failed.
-    assert.are.same({ status = "failed" }, results[ids["test_div"]])
+    assert.are.equal("failed", results[ids["test_div"]].status)
   end)
 
   it("marks a method skipped when all its cases are skipped", function()
@@ -126,7 +139,32 @@ describe("results.xml_python_absl collect", function()
   it("disambiguates a prefix collision by longest prefix", function()
     -- test_prefix0 must map to test_prefix (longer), not test_pre.
     assert.are.same({ status = "passed" }, results[ids["test_pre"]])
-    assert.are.same({ status = "failed" }, results[ids["test_prefix"]])
+    assert.are.equal("failed", results[ids["test_prefix"]].status)
+  end)
+end)
+
+describe("results.xml_python_absl collect — traceback line numbers", function()
+  it("parses the deepest test-file frame's line (0-indexed)", function()
+    local tree = build_tree()
+    local ids = ids_by_name(tree)
+    local traceback = table.concat({
+      "Traceback (most recent call last):",
+      '  File "/some/runfiles/helpers.py", line 5, in wrapper',
+      "    return fn()",
+      '  File "/some/runfiles/mypkg/test_math.py", line 42, in test_add',
+      "    self.assertEqual(1, 2)",
+      "AssertionError: 1 != 2",
+    }, "\n")
+    local root = vim.fn.tempname()
+    local dir = root .. "/bazel-testlogs/mypkg/mytest"
+    vim.fn.mkdir(dir, "p")
+    vim.fn.writefile(vim.split(suite({ tc("test_add0", "fail", traceback) }), "\n"), dir .. "/test.xml")
+
+    local results = absl.collect({
+      context = { target = "//mypkg:mytest", root = root, testlogs_symlink = "bazel-testlogs" },
+    }, {}, tree)
+    -- line 42 in test_math.py (the deepest frame in that file) -> 0-indexed 41.
+    assert.are.equal(41, results[ids["test_add"]].errors[1].line)
   end)
 end)
 
@@ -148,7 +186,7 @@ describe("results.xml_python_absl collect — exact match precedence", function(
     local results = absl.collect({
       context = { target = "//mypkg:mytest", root = root, testlogs_symlink = "bazel-testlogs" },
     }, {}, tree)
-    assert.are.same({ status = "failed" }, results[ids["test_foo0"]])
+    assert.are.equal("failed", results[ids["test_foo0"]].status)
     assert.is_nil(results[ids["test_foo"]])
   end)
 end)

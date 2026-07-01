@@ -219,7 +219,8 @@ guessing fallback chain.  A collector is any function with the signature
 can write your own to parse whatever output your runner produces.
 
 The default (`results/xml.lua`) reads JUnit XML from `bazel-testlogs` and
-supports `passed`, `failed`, and `skipped` statuses.  It is language-agnostic
+supports `passed`, `failed`, and `skipped` statuses, surfacing each
+`<failure>`/`<error>` message as a neotest diagnostic.  It is language-agnostic
 and can be reused by custom sub-adapters for any language that emits standard
 JUnit XML.
 
@@ -244,7 +245,9 @@ for `@parameterized.parameters`, `test_foo_<name>` for
 the neotest tree only has the decorated method.  This collector maps each
 `<testcase>` back to the source method whose name it starts with (exact match
 first, otherwise the longest prefix) and aggregates: **any** failing case or
-subtest fails the parent method.  It handles sharding like `results/xml.lua`.
+subtest fails the parent method, and each failing case contributes a diagnostic
+(prefixed with the case name, with the source line parsed from the traceback
+where available).  It handles sharding like `results/xml.lua`.
 
 ```lua
 require("neotest-bazel-modular")({

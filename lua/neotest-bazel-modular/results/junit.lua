@@ -121,4 +121,81 @@ function M.for_each_testcase(spec, fn)
   return #xml_files
 end
 
+-- The <failure>/<error> node of a <testcase>, or nil.  xml2lua reduces it to a
+-- string when it has body text but no attributes, or a table
+-- { _attr = { message = … }, [1] = "body", … } when it has both.
+local function fail_node(tc)
+  return tc.failure or tc.error
+end
+
+-- Concatenate a failure/error node's text body (the traceback), or nil.
+local function node_body(node)
+  if type(node) == "string" then
+    return node
+  end
+  if type(node) == "table" then
+    local parts = {}
+    for _, v in ipairs(node) do
+      if type(v) == "string" then
+        parts[#parts + 1] = v
+      end
+    end
+    if #parts > 0 then
+      return table.concat(parts, "\n")
+    end
+  end
+  return nil
+end
+
+local function first_nonblank_line(s)
+  for line in (s .. "\n"):gmatch("(.-)\n") do
+    local t = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if t ~= "" then
+      return t
+    end
+  end
+  return nil
+end
+
+-- A short human-readable message for a failing <testcase>: the failure/error
+-- node's `message` attribute, else the first non-blank line of its body.
+function M.failure_message(tc)
+  local node = fail_node(tc)
+  if not node then
+    return nil
+  end
+  if type(node) == "table" and node._attr and node._attr.message and node._attr.message ~= "" then
+    return node._attr.message
+  end
+  local body = node_body(node)
+  return body and first_nonblank_line(body)
+end
+
+-- The 0-indexed source line of the deepest traceback frame in `filename`
+-- (matched by basename), or nil.  JUnit carries no line attribute, so this
+-- parses the Python traceback in the failure/error body:
+--   File "…/test_foo.py", line 42, in test_bar
+local function basename(path)
+  return path and path:match("([^/]+)$")
+end
+
+function M.failure_line(tc, filename)
+  local node = fail_node(tc)
+  if not node then
+    return nil
+  end
+  local body = node_body(node)
+  local base = basename(filename)
+  if not (body and base) then
+    return nil
+  end
+  local last
+  for file, lno in body:gmatch('File "([^"]+)", line (%d+)') do
+    if basename(file) == base then
+      last = tonumber(lno)
+    end
+  end
+  return last and (last - 1) or nil -- traceback is 1-indexed; neotest wants 0
+end
+
 return M
