@@ -64,7 +64,18 @@ local default_bazel_workspace_root = lib.files.match_root_pattern("MODULE.bazel"
 local bazel_workspace_root = default_bazel_workspace_root
 
 local default_discovery_root = default_bazel_workspace_root
-Adapter.root = default_discovery_root
+local discovery_root = default_discovery_root
+
+-- Wrap the finder in a locally-defined function rather than assigning it (or an
+-- opts function) to Adapter.root directly.  neotest's parsing subprocess finds
+-- this plugin's directory by running debug.getinfo on one of the module's
+-- functions (picked in unspecified `pairs` order); a bare match_root_pattern
+-- closure resolves into *neotest's* source tree, so if that one were picked the
+-- adapter would silently fail to load in the subprocess.  This wrapper always
+-- resolves to init.lua, keeping every introspected function pointing at us.
+function Adapter.root(dir)
+  return discovery_root(dir)
+end
 
 function Adapter.filter_dir(name, rel_path, root)
   return not dir_is_ignored(name)
@@ -164,7 +175,9 @@ end
 setmetatable(Adapter, {
   __call = function(_, opts)
     opts = opts or {}
-    Adapter.root = type(opts.discovery_root) == "function" and opts.discovery_root or default_discovery_root
+    -- Update the finder the Adapter.root wrapper delegates to; don't replace
+    -- Adapter.root itself (see the wrapper's comment).
+    discovery_root = type(opts.discovery_root) == "function" and opts.discovery_root or default_discovery_root
     bazel_workspace_root = type(opts.bazel_workspace_root) == "function" and opts.bazel_workspace_root
       or default_bazel_workspace_root
     local bazel_binary = opts.bazel_binary or "bazel"
