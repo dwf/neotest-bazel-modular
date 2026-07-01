@@ -35,11 +35,20 @@
           nvim-treesitter-parsers.starlark
         ];
 
+        # Provide the runtime plugins as `buildInputs`, not `dependencies`.
+        # buildVimPlugin's require-check hook adds buildInputs to the rtp, so
+        # the build-time `require()` of our modules (which pull in neotest,
+        # neotest-python, nio, plenary) still passes -- but buildInputs are NOT
+        # propagated to consumers.  `dependencies` would be: nixpkgs' pluginToDrv
+        # walks the transitive closure of a plugin's `dependencies` and resolves
+        # any string entry (e.g. a rockspec dep like "nvim-nio") against the
+        # consumer's pkgs.vimPlugins, which breaks nixvim/home-manager setups.
+        # A consumer supplies the neotest stack itself (see README Requirements).
         neotest-bazel-modular = pkgs.vimUtils.buildVimPlugin {
           pname = "neotest-bazel-modular";
           version = "0-unstable";
           src = self;
-          dependencies = plugin-deps;
+          buildInputs = plugin-deps;
         };
 
         # The test/check Neovim only needs the dependencies: the spec suite

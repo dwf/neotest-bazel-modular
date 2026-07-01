@@ -106,7 +106,7 @@ Keymaps available in the demo:
 | `<leader>ts` | Toggle neotest summary panel |
 | `<leader>to` | Toggle output panel |
 
-To consume the adapter in your own Nix config, add it as an overlay or local plugin pointing at the repository root.
+To consume the adapter in your own Nix config, add `packages.default` (or the source) as a plugin. It does **not** declare its runtime plugins as `dependencies`, so add the [Requirements](#requirements) — neotest, nvim-nio, plenary.nvim, neotest-python, and the `python`/`starlark` tree-sitter parsers — to your own plugin set alongside it (with nixvim/home-manager you almost certainly already have the neotest stack). Dependencies are intentionally not propagated: nixpkgs resolves a plugin's transitive `dependencies` against your `pkgs.vimPlugins`, which breaks on the neotest rockspec's string deps.
 
 ## Setup
 
