@@ -215,37 +215,19 @@ require("neotest-bazel-modular")({
 
 #### Choosing a results collector
 
-The Python sub-adapter uses an explicit results collector rather than a
-guessing fallback chain.  A collector is any function with the signature
-`collect(spec, result, tree) -> table<position_id, { status }> | nil`, so you
-can write your own to parse whatever output your runner produces.
+The Python sub-adapter's results collector is configurable.  A collector is any
+function `collect(spec, result, tree) -> table<position_id, { status }> | nil`,
+so you can plug in your own.
 
 The **default**, `results/xml_python_absl.lua`, reads the JUnit XML Bazel writes
-to `bazel-testlogs` and is tuned for
-[`absl.testing`](https://abseil.io/docs/python/guides/testing).  absl expands a
-parameterized method into many `<testcase>` entries — `test_foo0 (repr)` for
-`@parameterized.parameters`, `test_foo_<name>` for
-`@parameterized.named_parameters`, plus failing `self.subTest(...)` cases — but
-the neotest tree only has the decorated method.  This collector maps each
-`<testcase>` back to its source method and aggregates: **any** failing case or
-subtest fails the parent method, and each failing case contributes a diagnostic
-(prefixed with the case name, source line parsed from the traceback where
-available).  Ordinary, non-parameterized tests match by exact name, so it works
-fine as a general Python collector too.  It handles sharding.
-
-Mapping works in two steps: `@parameterized.named_parameters` cases are resolved
-**exactly** by parsing the decorator in the source (`results/absl_names.lua`) to
-reconstruct the `test_foo_<casename>` names absl generates; everything else
-(unnamed `test_foo0 (repr)`, `self.subTest` `test_foo (kwargs)`, plain tests)
-falls back to exact match, then longest source-method-name prefix.
-
-> The exact resolution covers the case longest-prefix can't: a named expansion
-> whose sibling method's name is a prefix of it (`test_foo`'s `nap` case →
-> `test_foo_nap`, alongside a `test_foo_na`).  The decorator parser understands
-> tuple (`("name", …)`), dict-literal (`{"testcase_name": "Name", …}`), and
-> `dict(testcase_name="Name", …)` case forms.  Cases built with a comprehension
-> are an anti-pattern (the generated names aren't greppable) and are out of
-> scope — such methods fall back to longest-prefix matching.
+to `bazel-testlogs` and handles
+[`absl.testing`](https://abseil.io/docs/python/guides/testing) suites correctly:
+parameterized cases (`@parameterized.parameters` / `named_parameters`) and
+`self.subTest` cases are each mapped back to their decorated source method and
+aggregated, so any failing case or subtest fails the parent, with a per-case
+diagnostic (and the source line, where the traceback gives one).  Named
+parameterizations are resolved by parsing the decorator in the source, which
+handles the otherwise-ambiguous cases.
 
 `results/xml.lua` is a **simplified, language-agnostic** JUnit reader.  Nothing
 references it by default (the Python default is the absl collector above) and
