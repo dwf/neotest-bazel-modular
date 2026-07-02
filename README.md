@@ -243,11 +243,16 @@ parameterized method into many `<testcase>` entries — `test_foo0`, `test_foo1`
 for `@parameterized.parameters`, `test_foo_<name>` for
 `@parameterized.named_parameters`, plus failing `self.subTest(...)` cases — but
 the neotest tree only has the decorated method.  This collector maps each
-`<testcase>` back to the source method whose name it starts with (exact match
-first, otherwise the longest prefix) and aggregates: **any** failing case or
+`<testcase>` back to its source method and aggregates: **any** failing case or
 subtest fails the parent method, and each failing case contributes a diagnostic
 (prefixed with the case name, with the source line parsed from the traceback
 where available).  It handles sharding like `results/xml.lua`.
+
+Mapping works in two steps: `@parameterized.named_parameters` cases are resolved
+**exactly** by parsing the decorator in the source (`results/absl_names.lua`) to
+reconstruct the `test_foo_<casename>` names absl generates; everything else
+(unnamed `test_foo0 (repr)`, `self.subTest` `test_foo (kwargs)`, plain tests)
+falls back to exact match, then longest source-method-name prefix.
 
 ```lua
 require("neotest-bazel-modular")({
@@ -257,10 +262,13 @@ require("neotest-bazel-modular")({
 })
 ```
 
-> The longest-prefix match is a heuristic: it can't reliably disambiguate when
-> one method's name is a parameterized expansion of another's in the same class
-> (e.g. a real `test_foo1` vs. `test_foo`'s case 1).  Exact names are matched to
-> their own method first; the rest fall back to longest prefix.
+> The exact resolution covers the case longest-prefix can't: a named expansion
+> whose sibling method's name is a prefix of it (`test_foo`'s `nap` case →
+> `test_foo_nap`, alongside a `test_foo_na`).  The decorator parser understands
+> tuple (`("name", …)`), dict-literal (`{"testcase_name": "Name", …}`), and
+> `dict(testcase_name="Name", …)` case forms.  Cases built with a comprehension
+> are an anti-pattern (the generated names aren't greppable) and are out of
+> scope — such methods fall back to longest-prefix matching.
 
 Both `results/xml.lua` and `results/xml_python_absl.lua` share the JUnit
 plumbing in `results/junit.lua` (testlogs resolution, shard walking, `<testcase>`

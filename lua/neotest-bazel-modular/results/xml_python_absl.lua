@@ -14,14 +14,17 @@
 -- position: any failing case fails the parent (subtests included).
 --
 -- Matching a testcase name to its source method:
---   * an exact match wins (a plain, non-parameterized test);
---   * otherwise the LONGEST source-method name that is a prefix of the testcase
---     name is the parent (base method + index / _name / subtest suffix).
--- Longest-prefix is a heuristic and is genuinely ambiguous when one method's
--- name is a parameterized expansion of another's in the same class (e.g. a real
--- `test_foo1` vs. `test_foo`'s case 1).  Preferring exact matches, and the
--- longest prefix otherwise, is the best that can be done from names alone;
--- order in the report is not reliable enough to disambiguate the rest.
+--   1. Named-parameter expansions are resolved exactly.  The source file's
+--      @parameterized.named_parameters decorators are parsed (see absl_names)
+--      to reconstruct the exact "{method}_{casename}" names absl generates, so
+--      those map to their method with no ambiguity.
+--   2. Everything else (unnamed "test_foo0 (repr)", subtests "test_foo (kwargs)",
+--      plain tests) falls back to: exact match, else the LONGEST source-method
+--      name that is a prefix of the testcase name.
+-- Longest-prefix is a heuristic, ambiguous only in the rare case where a
+-- sibling method's name is a prefix of a named expansion -- which step 1 now
+-- resolves.  (Unnamed expansions can't collide: absl raises DuplicateTestName
+-- if a generated index name matches an existing method.)
 --
 -- Configure explicitly:
 --   require("neotest-bazel-modular")({
@@ -31,6 +34,7 @@
 --   })
 
 local junit = require("neotest-bazel-modular.results.junit")
+local absl_names = require("neotest-bazel-modular.results.absl_names")
 
 local CLASSLESS = "\0"
 
@@ -48,6 +52,18 @@ local function index_by_class(tree)
     end
   end
   return by_class
+end
+
+-- The id of the candidate whose name is exactly `method`, or nil.
+local function id_for_method(candidates, method)
+  if candidates then
+    for _, c in ipairs(candidates) do
+      if c.name == method then
+        return c.id
+      end
+    end
+  end
+  return nil
 end
 
 -- Find the source method id for an absl testcase name among `candidates`
@@ -91,8 +107,10 @@ function M.collect(spec, result, tree)
   end
 
   -- All positions share the file being tested; use it to resolve traceback
-  -- line numbers.
+  -- line numbers and to reconstruct named_parameters expansion names.
   local file_path = tree:data() and tree:data().path
+  -- class -> { expansion_name -> method_name }, from the source decorators.
+  local named = file_path and absl_names.named_expansions(file_path) or {}
 
   -- id -> { rank, status, errors }.  A parent's status is the max-rank of its
   -- cases (failure dominates); one errors entry is accumulated per failing case
@@ -105,7 +123,10 @@ function M.collect(spec, result, tree)
     end
     local class = attr.classname and attr.classname:match("([^.]+)$")
     local candidates = (class and by_class[class]) or by_class[CLASSLESS] or all
-    local id = find_source_id(candidates, attr.name)
+    -- Resolve named-parameter expansions exactly (from the source); otherwise
+    -- fall back to exact/longest-prefix matching.
+    local method = class and named[class] and named[class][attr.name]
+    local id = (method and id_for_method(candidates, method)) or find_source_id(candidates, attr.name)
     if not id then
       return
     end

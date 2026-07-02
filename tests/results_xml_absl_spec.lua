@@ -165,6 +165,50 @@ describe("results.xml_python_absl collect", function()
   end)
 end)
 
+describe("results.xml_python_absl collect — named_parameters source resolution", function()
+  it("resolves a named expansion to its method, not a prefix sibling", function()
+    -- The pathological case longest-prefix can't solve: test_foo's "nap" case
+    -- expands to test_foo_nap, and a sibling test_foo_na has a name that is a
+    -- prefix of it.  Parsing the decorator resolves test_foo_nap -> test_foo.
+    local src = table.concat({
+      "class TestMath(parameterized.TestCase):",
+      '    @parameterized.named_parameters(("nap", 1))',
+      "    def test_foo(self, x):",
+      "        self.fail()",
+      "",
+      "    def test_foo_na(self):",
+      "        pass",
+      "",
+    }, "\n")
+    local path = vim.fn.tempname() .. ".py"
+    vim.fn.writefile(vim.split(src, "\n"), path)
+
+    local tree = lib.positions.parse_tree({
+      { type = "file", path = path, name = "test_math.py", range = { 0, 0, 100, 0 } },
+      { type = "namespace", path = path, name = "TestMath", range = { 0, 0, 99, 0 } },
+      { type = "test", path = path, name = "test_foo", range = { 1, 0, 3, 0 } },
+      { type = "test", path = path, name = "test_foo_na", range = { 5, 0, 6, 0 } },
+    }, {})
+    local ids = ids_by_name(tree)
+
+    local root = vim.fn.tempname()
+    local dir = root .. "/bazel-testlogs/mypkg/mytest"
+    vim.fn.mkdir(dir, "p")
+    vim.fn.writefile(
+      vim.split(suite({ tc("test_foo_nap", "fail"), tc("test_foo_na", "pass") }), "\n"),
+      dir .. "/test.xml"
+    )
+
+    local results = absl.collect({
+      context = { target = "//mypkg:mytest", root = root, testlogs_symlink = "bazel-testlogs" },
+    }, {}, tree)
+
+    -- The failure lands on test_foo (its case), not the passing sibling.
+    assert.are.equal("failed", results[ids["test_foo"]].status)
+    assert.are.same({ status = "passed" }, results[ids["test_foo_na"]])
+  end)
+end)
+
 describe("results.xml_python_absl collect — raw absl entity encoding", function()
   it("decodes &#x20; in the testcase name before matching", function()
     -- Verbatim from a real absl JUnit report: absl encodes spaces as &#x20;.
