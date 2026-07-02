@@ -11,10 +11,10 @@ A [neotest](https://github.com/nvim-neotest/neotest) adapter for Bazel monorepos
 
 ## Features
 
-- Finds the Bazel workspace root automatically (`MODULE.bazel`, `WORKSPACE.bazel`, `WORKSPACE`)
+- Separates the discovery root from the Bazel workspace root, so neotest scans your working "neighbourhood" (e.g. the nearest package) instead of walking an entire huge monorepo; both are overridable — see the `discovery_root` / `bazel_workspace_root` [options](#options)
 - Prunes Bazel output symlinks (`bazel-bin`, `bazel-out`, `bazel-testlogs`, …) and common large directories so the neotest directory walker stays fast
-- Resolves the Bazel target for a test file two ways — parsing the nearest `BUILD.bazel`/`BUILD` with tree-sitter (no subprocess), or `bazel query` (handles `glob()`); see [How Bazel targets are resolved](#how-bazel-targets-are-resolved)
-- Maps Bazel's JUnit XML output back to individual neotest positions (with a pluggable collector for other output formats)
+- Supports resolving the Bazel target for a test file two ways — parsing the nearest `BUILD.bazel`/`BUILD` with tree-sitter (no subprocess), or `bazel query` (handles `glob()`); see [How Bazel targets are resolved](#how-bazel-targets-are-resolved)
+- Bundles several pluggable results collectors, including one for [`absl.testing`](https://abseil.io/docs/python/guides/testing) that maps parameterized cases and subtests back to their source method
 - Per-language sub-adapters are configurable: override individual methods or replace the entire factory
 
 ### Python support
