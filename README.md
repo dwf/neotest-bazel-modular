@@ -1,6 +1,8 @@
 # neotest-bazel-modular
 
-A [neotest](https://github.com/nvim-neotest/neotest) adapter for Bazel monorepos, designed around a pluggable per-language router so that test discovery and execution can be extended or overridden per language without touching the core adapter.
+A [neotest](https://github.com/nvim-neotest/neotest) adapter for running **Bazel** tests from Neovim: it discovers test files, resolves each to its Bazel target, runs `bazel test`, and maps the JUnit results back to individual tests in the neotest UI.
+
+Only **Python** is supported today, via a built-in sub-adapter. The adapter is built around a pluggable per-language router, so support for other languages can be added — or the Python behaviour overridden method-by-method — without touching the core.
 
 > **A note on Nix.** The author is a heavy [Nix](https://nixos.org/)/NixOS user,
 > so this repository ships a `flake.nix` and the docs lean on it for examples.
@@ -11,7 +13,7 @@ A [neotest](https://github.com/nvim-neotest/neotest) adapter for Bazel monorepos
 
 ## Features
 
-- Separates the discovery root from the Bazel workspace root, so neotest scans your working "neighbourhood" (e.g. the nearest package) instead of walking an entire huge monorepo; both are overridable — see the `discovery_root` / `bazel_workspace_root` [options](#options)
+- Keeps neotest's discovery root separate from the Bazel workspace root — point `discovery_root` at your working "neighbourhood" (e.g. the nearest package) so neotest doesn't crawl an entire huge monorepo. It defaults to the workspace root; both roots are overridable (see [Options](#options))
 - Prunes Bazel output symlinks (`bazel-bin`, `bazel-out`, `bazel-testlogs`, …) and common large directories so the neotest directory walker stays fast
 - Supports resolving the Bazel target for a test file two ways — parsing the nearest `BUILD.bazel`/`BUILD` with tree-sitter (no subprocess), or `bazel query` (handles `glob()`); see [How Bazel targets are resolved](#how-bazel-targets-are-resolved)
 - Bundles several pluggable results collectors, including one for [`absl.testing`](https://abseil.io/docs/python/guides/testing) that maps parameterized cases and subtests back to their source method
@@ -112,7 +114,8 @@ To consume the adapter in your own Nix config, add `packages.default` (or the so
 
 ## Setup
 
-Pass the adapter to neotest in your config. All options are optional.
+Pass the adapter to neotest in your config. Passing it directly, as below, uses
+the defaults (which work for a standard Bazel + Python setup):
 
 ```lua
 require("neotest").setup({
@@ -121,6 +124,10 @@ require("neotest").setup({
   },
 })
 ```
+
+To configure it, call it with an options table instead —
+`require("neotest-bazel-modular")({ … })` — see [Options](#options). Everything
+is optional.
 
 ### Options
 
