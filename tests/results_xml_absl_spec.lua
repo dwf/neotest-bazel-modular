@@ -2,6 +2,10 @@
 -- <testcase> entries back to their decorated source method, aggregating status
 -- (any failure fails the parent) and failure messages, disambiguating prefix
 -- collisions, aggregating across shards, and parsing traceback line numbers.
+--
+-- The <testcase> names here are the real ones absl emits (verified against a
+-- live absl run): unnamed params are "{method}{index} (repr)", named params are
+-- "{method}_{casename}", and failing subtests are "{method} (kwargs)".
 
 local lib = require("neotest.lib")
 local absl = require("neotest-bazel-modular.results.xml_python_absl")
@@ -9,7 +13,10 @@ local absl = require("neotest-bazel-modular.results.xml_python_absl")
 local PATH = "/proj/mypkg/test_math.py"
 
 -- Class TestMath with several decorated methods (each is ONE source position,
--- as tree-sitter sees it).  test_pre / test_prefix exercise prefix collision.
+-- as tree-sitter sees it).
+--   test_pre / test_prefix      -- prefix collision between two unnamed-param methods
+--   test_calc / test_calc_values -- a named-param method whose name is a prefix of
+--                                   a subtest method (the real collision absl produces)
 local function build_tree()
   local positions = {
     { type = "file", path = PATH, name = "test_math.py", range = { 0, 0, 200, 0 } },
@@ -22,6 +29,8 @@ local function build_tree()
     { type = "test", path = PATH, name = "test_skipall", range = { 11, 0, 12, 0 } },
     { type = "test", path = PATH, name = "test_withsub", range = { 13, 0, 14, 0 } },
     { type = "test", path = PATH, name = "test_multi", range = { 15, 0, 16, 0 } },
+    { type = "test", path = PATH, name = "test_calc", range = { 17, 0, 18, 0 } },
+    { type = "test", path = PATH, name = "test_calc_values", range = { 19, 0, 20, 0 } },
   }
   return lib.positions.parse_tree(positions, {})
 end
@@ -37,7 +46,11 @@ local function ids_by_name(tree)
   return ids
 end
 
--- Build an absl-style <testcase> for class TestMath.
+-- Build an absl-style <testcase> for class TestMath.  `name` is a real absl
+-- expansion name (see the ground truth in tests/parametrized of the playground):
+--   unnamed:  "test_add0 (0, 0, 0)"      -- {method}{index} + " (repr)"
+--   named:    "test_sub_normal"          -- {method}_{casename}
+--   subtest:  "test_withsub (widget=1)"  -- {method} + " (kwargs)"
 --   kind: "pass" | "fail" | "skip"; `body` is the <failure> element text.
 local function tc(name, kind, body)
   local inner = ""
@@ -84,22 +97,24 @@ describe("results.xml_python_absl collect", function()
     ids = ids_by_name(tree)
 
     local shard1 = suite({
-      tc("test_add0", "pass"), -- unnamed params, all pass
-      tc("test_add1", "pass"),
+      tc("test_add0 (0, 0, 0)", "pass"), -- unnamed params, all pass
+      tc("test_add1 (2, 3, 5)", "pass"),
       tc("test_sub_normal", "pass"), -- named params, one fails
       tc("test_sub_negative", "fail"),
-      tc("test_pre0", "pass"), -- prefix collision: test_pre passes ...
-      tc("test_prefix0", "fail"), -- ... test_prefix (longer) fails
-      tc("test_skipall0", "skip"), -- all cases skipped
-      tc("test_skipall1", "skip"),
+      tc("test_pre0 (1,)", "pass"), -- prefix collision: test_pre passes ...
+      tc("test_prefix0 (1,)", "fail"), -- ... test_prefix (longer) fails
+      tc("test_calc_zero", "pass"), -- named param of test_calc (passes) ...
+      tc("test_calc_values (n=0)", "fail"), -- ... subtest of test_calc_values (fails)
+      tc("test_skipall0 (1,)", "skip"), -- all cases skipped
+      tc("test_skipall1 (2,)", "skip"),
       tc("test_withsub", "pass"), -- base passes ...
       tc("test_withsub (widget=1)", "fail"), -- ... but a subtest fails
-      tc("test_div0", "pass"), -- test_div: one case per shard
-      tc("test_multi0", "fail"), -- two failing cases -> two errors
-      tc("test_multi1", "fail"),
+      tc("test_div0 (1,)", "pass"), -- test_div: one case per shard
+      tc("test_multi0 (1,)", "fail"), -- two failing cases -> two errors
+      tc("test_multi1 (2,)", "fail"),
     })
     local shard2 = suite({
-      tc("test_div1", "fail"), -- cross-shard aggregation
+      tc("test_div1 (2,)", "fail"), -- cross-shard aggregation
     })
 
     results = absl.collect(spec_with_shards(shard1, shard2), {}, tree)
@@ -141,6 +156,42 @@ describe("results.xml_python_absl collect", function()
     assert.are.same({ status = "passed" }, results[ids["test_pre"]])
     assert.are.equal("failed", results[ids["test_prefix"]].status)
   end)
+
+  it("keeps a named-param method distinct from a subtest method it prefixes", function()
+    -- test_calc (named -> test_calc_zero) vs test_calc_values (subtest ->
+    -- "test_calc_values (n=0)").  The real collision absl produces.
+    assert.are.same({ status = "passed" }, results[ids["test_calc"]])
+    assert.are.equal("failed", results[ids["test_calc_values"]].status)
+  end)
+end)
+
+describe("results.xml_python_absl collect — raw absl entity encoding", function()
+  it("decodes &#x20; in the testcase name before matching", function()
+    -- Verbatim from a real absl JUnit report: absl encodes spaces as &#x20;.
+    local tree = build_tree()
+    local ids = ids_by_name(tree)
+    local xml = table.concat({
+      '<?xml version="1.0"?>',
+      "<testsuites>",
+      '  <testsuite name="TestMath">',
+      '    <testcase classname="__main__.TestMath" name="test_add0&#x20;(2,&#x20;3,&#x20;5)">'
+        .. '<failure message="boom">AssertionError</failure></testcase>',
+      "  </testsuite>",
+      "</testsuites>",
+      "",
+    }, "\n")
+    local root = vim.fn.tempname()
+    local dir = root .. "/bazel-testlogs/mypkg/mytest"
+    vim.fn.mkdir(dir, "p")
+    vim.fn.writefile(vim.split(xml, "\n"), dir .. "/test.xml")
+
+    local results = absl.collect({
+      context = { target = "//mypkg:mytest", root = root, testlogs_symlink = "bazel-testlogs" },
+    }, {}, tree)
+    -- "test_add0 (2, 3, 5)" (decoded) maps to test_add.
+    assert.are.equal("failed", results[ids["test_add"]].status)
+    assert.are.same({ { message = "test_add0 (2, 3, 5): boom" } }, results[ids["test_add"]].errors)
+  end)
 end)
 
 describe("results.xml_python_absl collect — traceback line numbers", function()
@@ -158,7 +209,7 @@ describe("results.xml_python_absl collect — traceback line numbers", function(
     local root = vim.fn.tempname()
     local dir = root .. "/bazel-testlogs/mypkg/mytest"
     vim.fn.mkdir(dir, "p")
-    vim.fn.writefile(vim.split(suite({ tc("test_add0", "fail", traceback) }), "\n"), dir .. "/test.xml")
+    vim.fn.writefile(vim.split(suite({ tc("test_add0 (1, 1)", "fail", traceback) }), "\n"), dir .. "/test.xml")
 
     local results = absl.collect({
       context = { target = "//mypkg:mytest", root = root, testlogs_symlink = "bazel-testlogs" },
