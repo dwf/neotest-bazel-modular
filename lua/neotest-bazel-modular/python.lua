@@ -1,6 +1,6 @@
 local lib = require("neotest.lib")
 local base = require("neotest-python.base")
-local xml_results = require("neotest-bazel-modular.results.xml")
+local absl_results = require("neotest-bazel-modular.results.xml_python_absl")
 local runner = require("neotest-bazel-modular.runner")
 
 -- Delegate the treesitter query to neotest-python.  With runner="pytest" and
@@ -39,7 +39,10 @@ local function factory(config)
   }
   -- results_collector must have the signature:
   --   collect(spec, result, tree) -> table<position_id, {status}> | nil
-  local collect = config.results_collector or xml_results.collect
+  -- Defaults to the absl.testing collector: it maps parameterized/subtest
+  -- <testcase>s back to their source method and aggregates, degrading to plain
+  -- exact-name matching for non-parameterized tests.
+  local collect = config.results_collector or absl_results.collect
 
   local M = {}
 

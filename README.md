@@ -32,10 +32,12 @@ exactly:
 | `test_*` methods inside a class | test (under the class namespace) |
 | Decorated `test_*` functions/methods (`@skip`, `@parametrize`, …) | test |
 
-By default, results are read from the JUnit XML written by Bazel to `bazel-testlogs`.
-`results/python_unittest.lua` is included as a worked example of an alternative
-collector — it parses the plain `unittest` runner's text output for setups
-without JUnit XML — and doubles as a template for writing your own; see
+By default, results are read from the JUnit XML Bazel writes to `bazel-testlogs`
+using the [`absl.testing`](https://abseil.io/docs/python/guides/testing)
+collector, which maps parameterized cases and subtests back to their source
+method (and degrades to plain exact-name matching for ordinary tests).  Other
+collectors — a simplified generic JUnit reader and a `unittest` text-output
+parser — are available too; see
 [Choosing a results collector](#choosing-a-results-collector) below.
 
 ## Requirements
@@ -92,9 +94,9 @@ collides with one started by a plain-shell `bazel` (which would live outside
 the FHS namespace and fail to locate the Python interpreter).
 
 The demo uses the adapter's default Python configuration, which reads results
-with the JUnit XML collector (`results/xml.lua`). For targets that run the
-plain `unittest` runner without JUnit XML output, configure the
-`python_unittest` collector (and `filter_arg = "--test_arg=%s"`) instead — see
+with the `absl.testing` JUnit collector (`results/xml_python_absl.lua`). For
+targets that run the plain `unittest` runner without JUnit XML output, configure
+the `python_unittest` collector (and `filter_arg = "--test_arg=%s"`) instead — see
 [Choosing a results collector](#choosing-a-results-collector).
 
 Keymaps available in the demo:
@@ -218,49 +220,24 @@ guessing fallback chain.  A collector is any function with the signature
 `collect(spec, result, tree) -> table<position_id, { status }> | nil`, so you
 can write your own to parse whatever output your runner produces.
 
-The default (`results/xml.lua`) reads JUnit XML from `bazel-testlogs` and
-supports `passed`, `failed`, and `skipped` statuses, surfacing each
-`<failure>`/`<error>` message as a neotest diagnostic.  It is language-agnostic
-and can be reused by custom sub-adapters for any language that emits standard
-JUnit XML.
-
-`results/python_unittest.lua` is included as a worked example of writing an
-alternative collector: it parses `FAIL:` / `ERROR:` lines from the plain
-`unittest` runner's text output instead of reading XML.  Use it directly if
-that fits your setup, or read it as a template for your own collector:
-
-```lua
-require("neotest-bazel-modular")({
-  python = {
-    results_collector = require("neotest-bazel-modular.results.python_unittest").collect,
-  },
-})
-```
-
-`results/xml_python_absl.lua` reads JUnit XML produced by
+The **default**, `results/xml_python_absl.lua`, reads the JUnit XML Bazel writes
+to `bazel-testlogs` and is tuned for
 [`absl.testing`](https://abseil.io/docs/python/guides/testing).  absl expands a
-parameterized method into many `<testcase>` entries — `test_foo0`, `test_foo1`
-for `@parameterized.parameters`, `test_foo_<name>` for
+parameterized method into many `<testcase>` entries — `test_foo0 (repr)` for
+`@parameterized.parameters`, `test_foo_<name>` for
 `@parameterized.named_parameters`, plus failing `self.subTest(...)` cases — but
 the neotest tree only has the decorated method.  This collector maps each
 `<testcase>` back to its source method and aggregates: **any** failing case or
 subtest fails the parent method, and each failing case contributes a diagnostic
-(prefixed with the case name, with the source line parsed from the traceback
-where available).  It handles sharding like `results/xml.lua`.
+(prefixed with the case name, source line parsed from the traceback where
+available).  Ordinary, non-parameterized tests match by exact name, so it works
+fine as a general Python collector too.  It handles sharding.
 
 Mapping works in two steps: `@parameterized.named_parameters` cases are resolved
 **exactly** by parsing the decorator in the source (`results/absl_names.lua`) to
 reconstruct the `test_foo_<casename>` names absl generates; everything else
 (unnamed `test_foo0 (repr)`, `self.subTest` `test_foo (kwargs)`, plain tests)
 falls back to exact match, then longest source-method-name prefix.
-
-```lua
-require("neotest-bazel-modular")({
-  python = {
-    results_collector = require("neotest-bazel-modular.results.xml_python_absl").collect,
-  },
-})
-```
 
 > The exact resolution covers the case longest-prefix can't: a named expansion
 > whose sibling method's name is a prefix of it (`test_foo`'s `nap` case →
@@ -269,6 +246,34 @@ require("neotest-bazel-modular")({
 > `dict(testcase_name="Name", …)` case forms.  Cases built with a comprehension
 > are an anti-pattern (the generated names aren't greppable) and are out of
 > scope — such methods fall back to longest-prefix matching.
+
+`results/xml.lua` is a **simplified, language-agnostic** JUnit reader.  Nothing
+references it by default (the Python default is the absl collector above) and
+nothing in it is Python-specific — it's a standalone, opt-in collector that also
+serves as the clearest starting template for a collector for any language that
+emits standard JUnit XML.  It maps each `<testcase classname="…" name="…">` to a
+position by class + method name (no parameterization handling) and surfaces
+`<failure>`/`<error>` messages as diagnostics:
+
+```lua
+require("neotest-bazel-modular")({
+  python = {
+    results_collector = require("neotest-bazel-modular.results.xml").collect,
+  },
+})
+```
+
+`results/python_unittest.lua` is another worked example: it parses `FAIL:` /
+`ERROR:` lines from the plain `unittest` runner's text output instead of reading
+XML — for setups without JUnit XML.
+
+```lua
+require("neotest-bazel-modular")({
+  python = {
+    results_collector = require("neotest-bazel-modular.results.python_unittest").collect,
+  },
+})
+```
 
 Both `results/xml.lua` and `results/xml_python_absl.lua` share the JUnit
 plumbing in `results/junit.lua` (testlogs resolution, shard walking, `<testcase>`
