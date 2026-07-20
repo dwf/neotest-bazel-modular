@@ -19,6 +19,10 @@ local M = {}
 --   test_filter      (function) function(args) -> string|nil, the language's
 --                               position -> runner filter mapping
 --
+-- args.extra_args (string[], optional) are per-run ad-hoc flags supplied by
+-- the caller (e.g. `require("neotest").run.run({ extra_args = {...} })`);
+-- they're appended after opts.args so they can override the static config.
+--
 -- Returns the RunSpec, or nil when no Bazel target can be resolved for the file.
 function M.build_spec(args, root, opts)
   local position = args.tree:data()
@@ -39,6 +43,11 @@ function M.build_spec(args, root, opts)
     flags[#flags + 1] = string.format(opts.filter_arg, vim.fn.shellescape(filter))
   end
   for _, flag in ipairs(opts.args or {}) do
+    flags[#flags + 1] = vim.fn.shellescape(flag)
+  end
+  -- Ad-hoc flags for this one run, e.g. `require("neotest").run.run({ extra_args
+  -- = {...} })`; appended after the static opts.args so they can override them.
+  for _, flag in ipairs(args.extra_args or {}) do
     flags[#flags + 1] = vim.fn.shellescape(flag)
   end
 
